@@ -23,9 +23,9 @@ import time
 tStart = time.time()#計時開始，以秒計算
 
 # 讀取檔案train,test,RUL
-train = pd.read_csv(r'C:\Users\admin\Desktop\CMAPSSData\train_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
-test = pd.read_csv(r'C:\Users\admin\Desktop\CMAPSSData\test_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
-RUL = pd.read_csv(r'C:\Users\admin\Desktop\CMAPSSData\RUL_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
+train = pd.read_csv(r'D:\weilun\Desktop\SMB\CMAPSSData\train_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
+test = pd.read_csv(r'D:\weilun\Desktop\SMB\CMAPSSData\test_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
+RUL = pd.read_csv(r'D:\weilun\Desktop\SMB\CMAPSSData\RUL_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
 #print(train,test,RUL)
 
 #第一次清洗
