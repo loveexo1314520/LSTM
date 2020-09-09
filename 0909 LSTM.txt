@@ -1,0 +1,202 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Sep  9 20:28:14 2020
+
+@author: admin
+"""
+
+
+# 環境建置
+import pandas as pd
+#import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from keras.layers import LSTM
+from keras.layers import Dense
+from keras.layers import RepeatVector
+from keras.layers import TimeDistributed
+from keras.models import Sequential
+from sklearn import preprocessing
+import matplotlib.pyplot as plt
+
+import time
+tStart = time.time()#計時開始，以秒計算
+
+# 讀取檔案train,test,RUL
+train = pd.read_csv(r'C:\Users\admin\Desktop\CMAPSSData\train_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
+test = pd.read_csv(r'C:\Users\admin\Desktop\CMAPSSData\test_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
+RUL = pd.read_csv(r'C:\Users\admin\Desktop\CMAPSSData\RUL_FD001.txt', parse_dates=False, delimiter=" ", decimal=".", header=None)
+#print(train,test,RUL)
+
+#第一次清洗
+table_NaN = pd.concat([train.isnull().sum(), test.isnull().sum()], axis=1)
+table_NaN.columns = ['train', 'test']
+#print(table_NaN)
+
+# 清理無用列
+train.drop(train.columns[[-1,-2]], axis=1, inplace=True)
+test.drop(test.columns[[-1,-2]], axis=1, inplace=True)
+RUL.drop(RUL.columns[[-1,-1]], axis=1, inplace=True)
+# print(train,test,RUL)
+
+#命名表頭
+cols = ['unit', 'cycles', 'op_setting1', 'op_setting2', 'op_setting3', 's1', 's2', 's3', 's4', 's5', 
+        's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21']
+train.columns = cols
+test.columns = cols
+
+#第二次清洗
+train.drop(['s1', 's5', 's10', 's16', 's18', 's19', 'op_setting3'], axis=1, inplace=True)
+test.drop(['s1', 's5', 's10', 's16', 's18', 's19', 'op_setting3'], axis=1, inplace=True)
+
+#train & test 最大值
+cyclestrain = train.groupby('unit', as_index=False)['cycles'].max()
+cyclestest = test.groupby('unit', as_index=False)['cycles'].max()
+
+#train_TTF新增
+train = pd.merge(train, train.groupby('unit', as_index=False)['cycles'].max(), how='left', on='unit')
+train.rename(columns={"cycles_x": "cycles", "cycles_y": "maxcycles"}, inplace=True)
+train['TTF'] = train['maxcycles'] - train['cycles'] #TTF新增
+# print(train)
+
+#資料縮放
+scaler = MinMaxScaler()
+ntrain = train.copy()
+ntrain.iloc[:,2:] = scaler.fit_transform(ntrain.iloc[:,2:])
+#print(type(ntrain), ntrain.shape)
+ntest = test.copy()
+ntest.iloc[:,2:] = scaler.fit_transform(ntest.iloc[:,2:])
+#print(ntest,type(ntest), ntest.shape)
+
+paststeps=30 # paststeps時間步長
+#train時間步長
+cyclestrain = ntrain.groupby('unit', as_index=False)['cycles'].max()
+cyclestrain_max=pd.DataFrame(cyclestrain)
+cyclestrain_max = cyclestrain_max['cycles']
+cyclestrain_max=cyclestrain_max.tolist()#list
+
+# 為時間步長,原始資料切割為(max- +1)份樣本,y值也要搭配。
+# 原始資料中,各引擎的最大樣本數,為list
+a = cyclestrain_max 
+cyclestrain_end  = [a[0]] #時間步長終止值
+
+# cyclestrain_end: 原始資料中,各引擎的最終樣本列數,為list
+for i in range(1,len(a)):
+    b = a[i] + cyclestrain_end[i-1]
+    cyclestrain_end.append(b)
+
+X_train=[]
+Y_train=[]
+c = 0
+for j in range(len(cyclestrain_end)): #len(cyclestrain_end)
+    for i in range(c,(cyclestrain_end[j]-paststeps)): #cyclestrain_end[j]-paststeps 
+        X_train.append(np.array(ntrain.iloc[i : i + paststeps, 2:19]))
+        Y_train.append(ntrain['TTF'].iloc[i : i + paststeps, ])
+    c = cyclestrain_end[j]
+X_train= np.array(X_train)
+Y_train = np.array(Y_train)
+Y_train=Y_train.reshape((17631,30,1))
+n_Y_train=Y_train.reshape((17631,30))
+
+#Y_train_new = Y_train / Y_train.max(axis=0)學姊的縮放
+
+#test時間步長
+cyclestest = ntest.groupby('unit', as_index=False)['cycles'].max()
+cyclestest_max=pd.DataFrame(cyclestest)
+cyclestest_max = cyclestest_max['cycles']
+cyclestest_max=cyclestest_max.tolist()#list
+
+
+# 為時間步長,原始資料切割為(max- +1)份樣本,y值也要搭配。
+# 原始資料中,各引擎的最大樣本數,為list
+a = cyclestest_max 
+cyclestest_end  = [a[0]] #時間步長終止值
+
+# cyclestest_end: 原始資料中,各引擎的最終樣本列數,為list
+for i in range(1,len(a)):
+    b = a[i] + cyclestest_end[i-1]
+    cyclestest_end.append(b)
+
+X_test=[]
+X_new_test=[]
+c = 0
+for j in range(len(cyclestest_end)): #len(cyclestest_end)   
+    for i in range(c,(cyclestest_end[j]-paststeps)): #cyclestrain_end[j]-paststeps 
+        X_test.append(np.array(ntest.iloc[i :i+paststeps, 2:]))  
+        X_new_test.append(np.array(ntest.iloc[i ,:19]))
+    c = cyclestest_end[j] 
+X_test= np.array(X_test)
+X_new_test_Z = pd.DataFrame(X_new_test, columns=['unit', 'cycles', 's1','s2','s3','s4','s5','s6','s7','s8','s9','s10',
+                                                 's11','s12','s13','s14','s15','s16','s17']) 
+print(X_test.shape)
+print(X_new_test_Z .shape)
+ 
+# Y_test:RUL  
+d = 0
+Y_test=[]
+RUL = RUL[0].tolist() #to be list
+for j in range(len(cyclestest_max)): #len(cyclestest_max)
+    e = 0
+    for i in range(d, cyclestest_end[j]- paststeps):
+        x = RUL[j] + (cyclestest_max[j] - paststeps - e) 
+        Y_test.append(x)
+        e += 1
+    d = cyclestest_end[j]
+Y_test = np.array(Y_test).reshape(10096,1) #Y_test = Y_test.reshape((10096,1,1))
+Y_test = pd.DataFrame(Y_test)
+Y_test = scaler.fit_transform(Y_test)
+Y_test =  Y_test.reshape((10096,1,1))
+n_Y_test= Y_test.reshape((10096,1))
+
+##資料確認
+#print(X_train,X_train.shape)
+#print(Y_train,Y_train.shape)
+#print(X_test,X_test.shape)
+#print(Y_test,Y_test.shape)
+
+# 建立LSTM神經網路
+model = Sequential() 
+model.add(LSTM(8, activation='relu', input_shape=(30,17), return_sequences=False))
+model.add(RepeatVector(30))
+model.add(LSTM(8, activation='relu', return_sequences=False))
+model.add(Dense(1)) #只輸出1個值
+model.compile(loss='mean_squared_error',optimizer='adam')
+model.summary()
+
+# fit model
+model.fit(X_train,Y_train,epochs=10, batch_size=20, verbose=1)
+#壽命預測
+score = model.predict(X_test)
+#print(score[0:10],len(score))
+#print(score.min(), score.max())
+
+#逆推(De-normalize)
+
+predicted_rul = scaler.inverse_transform(score)
+de_Y_train= n_Y_train.reshape((528930,1))
+de_Y_train = scaler.inverse_transform(n_Y_train)
+print(de_Y_train,de_Y_train.shape)
+# de_Y_test= n_Y_test.reshape((302880,17))
+de_Y_test= n_Y_test.reshape((10096,1))
+de_Y_test =scaler.inverse_transform(n_Y_test)
+predicted_rul = predicted_rul.ravel()
+predicted_rul = [round(yx, 2) for yx in predicted_rul]
+de_Y_test = de_Y_test.ravel()
+de_Y_train = de_Y_test.ravel()
+
+# print(predicted_rul)
+# print(de_Y_train)
+# print(de_Y_test)
+
+#畫圖(缺把引擎分開的迴圈)
+fig = plt.figure(figsize = (12, 8)) #外框大小
+plt.plot(predicted_rul, color='blue') #折線匯入、顏色
+plt.legend(['Predicted RUL'], bbox_to_anchor=(0., 1.02, 1., .102), 
+           loc=3, mode="expand", borderaxespad=0) #左上角圖案
+plt.ylabel('RUL (cycles)') #縱軸名稱
+
+tEnd = time.time()#計時結束
+#列印結果
+print ("It cost %f sec" % (tEnd - tStart))#會自動做近位
+print (tEnd - tStart)#原型長這樣
+#封包(模型訓練,壽命預測) TWCC及時預測
